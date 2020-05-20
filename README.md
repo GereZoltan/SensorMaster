@@ -28,13 +28,13 @@ When receives SIGINT, asks user for confirmation and
 - write termination status to the log file
 
 Master process queries
-- Status: measuring, error
+- Status: measuring, error (1)
 - Receives exit status
 
 Master process sets
-- Echoing to stdout on/off
-- Time interval of reading
-- Sends terminate signal
+- Echoing to stdout on/off (2)
+- Time interval of reading (3)
+- Sends terminate signal (4)
 
 #### The child processes
 are reading data from
@@ -54,7 +54,7 @@ Child process internal statuses and variables
 - Sensor address (Set at start)
 - Time interval of reading (Can be set any time)
 
-Required techniques:
+Required methods and techniques:
 - command line processing
 - network sockets (UDP)
 - file handling
