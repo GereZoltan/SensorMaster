@@ -1,0 +1,1 @@
+./sensormaster -c -a 127.0.0.1 -mfile meas.txt -sensortype NTC -sensoraddress 0x20 -echo off -interval 5

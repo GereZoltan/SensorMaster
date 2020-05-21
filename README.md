@@ -32,8 +32,6 @@ Master process queries
 - Receives exit status
 
 Master process sets
-- Echoing to stdout on/off (2)
-- Time interval of reading (3)
 - Sends terminate signal (4)
 
 #### The child processes
@@ -48,21 +46,21 @@ Child processes also log measurement data to file.
 
 Child process internal statuses and variables
 - Status: measuring, error
-- Echoing to stdout on/off (Can be set any time)
-- Filename for measurement logging (Set at start)
-- Sensor type: SensorModule NTC, SCC30-DB (Set at start)
-- Sensor address (Set at start)
-- Time interval of reading (Can be set any time)
+- Echoing to stdout on/off
+- Filename for measurement logging
+- Sensor type: SensorModule NTC, SCC30-DB
+- Sensor address
+- Time interval of reading
 
 Required methods and techniques:
 - command line processing
-- network sockets (UDP)
+- network sockets (TCP)
 - file handling
 - processes
-- communication between processes
-- signal handling
+- communication between processes (socketpairs)
+- signal handling, timer
 - I2C bus
-- timer
+- time, date
 
 ## Further development
 To be decided...

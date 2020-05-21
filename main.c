@@ -23,6 +23,10 @@
 #include <linux/i2c.h>
 #include <linux/i2c-dev.h>
 
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -31,16 +35,20 @@
 
 #include "ProcArgs.h"
 
+#ifndef DEBUG
 #define DEBUG 1
+#endif
 
 #define MAXPROCESSES (16)
 #define PS_ERROR (-1)
 #define PS_START (0)
 #define PS_MEASURING (1)
 
+#define MYPORT "4950"	// the port users will be connecting to
 
 // Constants
 const char *defaultMasterLogfileName = "sensormaster.log";
+const char *defaultMeasurementLogfileName = "measurement.txt";
 
 // Global variables
 volatile bool quitSignal = false;		// Quit signal, set by signal handler
@@ -66,8 +74,26 @@ static void rt_handler ( int signo ) {
     return;
 }
 
-/*
+/**
+ * @brief get IPv4 or IPv6 address
  *
+ * @param sa socket address structure
+ * @return void*
+ */
+void *get_in_addr ( struct sockaddr *sa ) {
+    if ( sa->sa_family == AF_INET ) {
+        return & ( ( ( struct sockaddr_in* ) sa )->sin_addr );
+    }
+
+    return & ( ( ( struct sockaddr_in6* ) sa )->sin6_addr );
+}
+
+/**
+ * @brief main function
+ *
+ * @param argc argument count
+ * @param argv argument list
+ * @return int
  */
 int main ( int argc, char *argv[] ) {
     // Process variables
@@ -98,8 +124,11 @@ int main ( int argc, char *argv[] ) {
     // Socket handling variables
     int serverSocket, server2ClientSocket;	// Sockets for server side handling
     int client2ServerSocket;				// Socket for client side handling
-    struct sockaddr srvAddrStruct;
+    struct sockaddr srvAddrStruct, clientAddrStruct;
     int file_flags;
+    struct addrinfo hints, *servinfo, *p;
+    int rv;
+	socklen_t addressStructSize;
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -112,15 +141,20 @@ int main ( int argc, char *argv[] ) {
     if ( ( argc > 1 ) && ( strcmp ( argv[1], "-h" ) == 0 ) ) {			// If help is invoked
         printf ( "Usage:\n" );										// Print usage and terminate
         printf ( "%s -h\n", argv[0] );
-        printf ( "%s -c -l <master_logfile> -s <address> -mfile <filename> -sensortype <NTC|SCC30> -sensoraddress <address> -echo {0|1} -interval <t>\n", argv[0] );
-        printf ( "%s -f -l <master_logfile> -s <address> inputfile_containing_command\n", argv[0] );
-        printf ( "The master_logfile is optional. If not specified the default name is: %s\n", defaultMasterLogfileName );
+        printf ( "%s -c [-l <master_logfile>] [-a <address> | -s] [-mfile <filename>] -sensortype <NTC|SCC30> -sensoraddress <address> [-echo {off|on} -interval <t>]\n", argv[0] );
+        printf ( "%s -f <inputfile_containing_command> [-l <master_logfile>] [-a <address> | -s]\n", argv[0] );
+        printf ( "-l <master_logfile> is optional. If not specified the default name is: %s\n", defaultMasterLogfileName );
         printf ( "-a <address> is optional. If specified the commands are sent to program running at <address>.\n" );
-        printf ( "-s <address> is optional. If specified the program listening at <address> for commands. If neither -a or -s specified program works offline.\n" );
-        printf ( "The format of inputfile is the same as in '-c' mode. One command per line. If the first character is # the line is ignored.\n" );
+        printf ( "-s is optional. If specified the program listening on network for commands.\n" );
+        printf ( "If neither -a or -s specified program works offline.\n" );
+        printf ( "The format of inputfile is the same as in '-c' mode. One command per line. If the first character of line is '#' the line is ignored.\n" );
         printf ( "Sensor address format is hexadecimal with '0x' prefix, ie. 0xA8.\n" );
         exit ( 1 );
     }
+
+    // Process program arguments
+    configuredProcesses = ReadArgumentsFromCommandLine ( argc, argv, masterLogfileName, procArgs, MAXPROCESSES );
+    masterLogfile = fopen ( masterLogfileName, "a+" );
 
     // Set up signal handler
     sigemptyset ( &XSignalBlock );
@@ -130,7 +164,10 @@ int main ( int argc, char *argv[] ) {
     Xhandler.sa_flags = 0;
     if ( sigaction ( SIGINT, &Xhandler, &oldHandler ) < 0 ) {
         perror ( "Signal" );
-        exit ( 1 );
+        clock_gettime ( CLOCK_REALTIME, &currentTime );
+        fprintf ( masterLogfile, "%s, %s, %s\n", ctime ( &currentTime.tv_sec ), "Signal", strerror ( errno ) );
+        fclose ( masterLogfile );
+        exit ( EXIT_FAILURE );
     }
 
     // Set up timer signal handler
@@ -145,11 +182,8 @@ int main ( int argc, char *argv[] ) {
     tmrEvent.sigev_value.sival_int = 12;
     timer_create ( CLOCK_REALTIME, &tmrEvent, &timerID );
 
-    sigfillset ( &timermask );
+    sigfillset ( &timermask );										// used by sigsuspend at the end of main loop
     sigdelset ( &timermask, SIGRTMAX );
-
-    // Process program arguments
-    configuredProcesses = ReadArgumentsFromCommandLine ( argc, argv, masterLogfileName, procArgs );
 
 #ifdef DEBUG
     printf ( "Process count: %d\n", configuredProcesses );
@@ -159,68 +193,151 @@ int main ( int argc, char *argv[] ) {
     printf ( "Server address: %s\n", serverAddress );
 #endif
 
+////////////////////////////////////////////////////////////////////////////////
+
     // Check if client mode...
     // ...and open socket to address, send data and terminate.
     if ( programMode == 1 ) {
-        srvAddrStruct.sa_family = AF_INET;
-        strcpy ( srvAddrStruct.sa_data, serverAddress );
-        client2ServerSocket = socket ( AF_INET, SOCK_STREAM, 0 );
-        if ( client2ServerSocket == -1 ) {
-            perror ( "clientsocket" );
-            sigaction ( SIGINT, &oldHandler, NULL );						// Restore old signal handler
-            exit ( EXIT_FAILURE );
-        }
+		memset(&hints, 0, sizeof(struct addrinfo));
+		hints.ai_family = AF_UNSPEC;
+		hints.ai_socktype = SOCK_STREAM;
+		hints.ai_flags = 0;
+		hints.ai_protocol = 0;
 
-        if ( connect ( client2ServerSocket, &srvAddrStruct, sizeof ( srvAddrStruct ) ) == -1 ) {
-            perror ( "clientconnect" );
-            close ( client2ServerSocket );
+		if ((rv = getaddrinfo(serverAddress, MYPORT, &hints, &servinfo)) != 0) {
+			printf("getaddrinfo: %s\n", gai_strerror(rv));
+			clock_gettime ( CLOCK_REALTIME, &currentTime );
+            fprintf ( masterLogfile, "%s, %s, %s\n", ctime ( &currentTime.tv_sec ), "clientsocket", gai_strerror(rv) );
+            fclose ( masterLogfile );
             sigaction ( SIGINT, &oldHandler, NULL );						// Restore old signal handler
             exit ( EXIT_FAILURE );
-        }
+			return 1;
+		}
+
+#ifdef DEBUG
+        printf("getaddrinfo returned:\n");
+		for ( p = servinfo; p != NULL; p = p->ai_next ) {
+			printf("flags: %d\tfamily:%d\tsocktype:%d\tprotocol:%d\taddr:%s\tcanonname:%s\n",
+				   p->ai_flags, p->ai_family, p->ai_socktype, p->ai_protocol, p->ai_addr->sa_data , p->ai_canonname);
+		}
+		printf("End of listing\n");
+#endif
+
+		// loop through all the results and make a socket
+		for(p = servinfo; p != NULL; p = p->ai_next) {
+			if ((client2ServerSocket = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1) {
+				perror("clientsocket");
+				continue;
+			}
+			if (connect(client2ServerSocket, p->ai_addr, p->ai_addrlen) != -1)
+				break;
+			close(client2ServerSocket);
+		}
+
+		if (p == NULL) {
+			printf("Connection failed\n");
+            clock_gettime ( CLOCK_REALTIME, &currentTime );
+            fprintf ( masterLogfile, "%s, %s, %s\n", ctime ( &currentTime.tv_sec ), "Connection failed" );
+            fclose ( masterLogfile );
+            sigaction ( SIGINT, &oldHandler, NULL );						// Restore old signal handler
+            exit ( EXIT_FAILURE );
+		}
+
         for ( int i = 0; i < configuredProcesses; i++ ) {
             write ( client2ServerSocket, &procArgs[i], sizeof ( procArgs[i] ) );
         }
+
+        clock_gettime ( CLOCK_REALTIME, &currentTime );
+        fprintf ( masterLogfile, "%s, %s\n", ctime ( &currentTime.tv_sec ), "Command send successful" );
+        fclose ( masterLogfile );
         close ( client2ServerSocket );
+		freeaddrinfo(servinfo);
         sigaction ( SIGINT, &oldHandler, NULL );						// Restore old signal handler
         exit ( EXIT_SUCCESS );
     }
 
+////////////////////////////////////////////////////////////////////////////////
+
     // Check if server mode...
     // ...and start socket server, bind address and start listening
     if ( programMode == 2 ) {
-        // Create address
-        srvAddrStruct.sa_family = AF_INET;
-        strcpy ( srvAddrStruct.sa_data, serverAddress );
-        // Create server socket
-        serverSocket = socket ( AF_INET, SOCK_STREAM, 0 );
-        if ( serverSocket == -1 ) {
-            perror ( "serversocket" );
+        memset ( &hints, 0, sizeof (struct addrinfo) );
+        hints.ai_family = AF_UNSPEC;								// set to AF_INET to force IPv4
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_flags = AI_PASSIVE;								// use my IP
+        hints.ai_protocol = 0;
+		hints.ai_addr = NULL;
+		hints.ai_next = NULL;
+
+        if ( ( rv = getaddrinfo ( NULL, MYPORT, &hints, &servinfo ) ) != 0 ) {
+            printf ( "getaddrinfo: %s\n", gai_strerror ( rv ) );
+            clock_gettime ( CLOCK_REALTIME, &currentTime );
+            fprintf ( masterLogfile, "%s, %s, %s\n", ctime ( &currentTime.tv_sec ),
+                      "getaddrinfo", gai_strerror ( rv ) );
+            fclose ( masterLogfile );
+            sigaction ( SIGINT, &oldHandler, NULL );				// Restore old signal handler
+            exit ( EXIT_FAILURE );
+        }
+
+#ifdef DEBUG
+        printf("getaddrinfo returned:\n");
+		for ( p = servinfo; p != NULL; p = p->ai_next ) {
+			printf("flags: %d\tfamily:%d\tsocktype:%d\tprotocol:%d\taddr:%s\tcanonname:%s\n",
+				   p->ai_flags, p->ai_family, p->ai_socktype, p->ai_protocol, p->ai_addr->sa_data , p->ai_canonname);
+		}
+		printf("End of listing\n");
+#endif
+
+        // loop through all the results and bind to the first we can
+        for ( p = servinfo; p != NULL; p = p->ai_next ) {
+            if ( ( serverSocket = socket ( p->ai_family, p->ai_socktype,
+                                           p->ai_protocol ) ) == -1 ) {
+                perror ( "listener: socket" );
+                continue;
+            }
+
+            if ( bind ( serverSocket, p->ai_addr, p->ai_addrlen ) == 0 ) {
+                break;
+            }
+
+            close ( serverSocket );
+        }
+
+        if ( p == NULL ) {
+            printf ( "listener: failed to bind socket\n" );
+            clock_gettime ( CLOCK_REALTIME, &currentTime );
+            fprintf ( masterLogfile, "%s, %s\n", ctime ( &currentTime.tv_sec ), "listener: failed to bind socket\n" );
+            fclose ( masterLogfile );
             sigaction ( SIGINT, &oldHandler, NULL );						// Restore old signal handler
             exit ( EXIT_FAILURE );
         }
+
+        freeaddrinfo ( servinfo );
+
         file_flags = fcntl ( serverSocket, F_GETFL, 0 );					// Set to non-blocking mode
         file_flags |= O_NONBLOCK;
         fcntl ( serverSocket, F_SETFL, file_flags );
 
-        // Check getaddrinfo
-
-        // Bind socket to address
-        if ( bind ( serverSocket, &srvAddrStruct, sizeof ( srvAddrStruct ) ) == -1 ) {
-            perror ( "serverbind" );
-            printf ( "%d\n", errno );
-            close ( serverSocket );
-            sigaction ( SIGINT, &oldHandler, NULL );						// Restore old signal handler
-            exit ( EXIT_FAILURE );
-        }
         // Listen
         if ( listen ( serverSocket, 10 ) == -1 ) {
             perror ( "serverlisten" );
+            clock_gettime ( CLOCK_REALTIME, &currentTime );
+            fprintf ( masterLogfile, "%s, %s, %s\n", ctime ( &currentTime.tv_sec ), "serverlisten", strerror ( errno ) );
+            fclose ( masterLogfile );
             close ( serverSocket );
             sigaction ( SIGINT, &oldHandler, NULL );						// Restore old signal handler
             exit ( EXIT_FAILURE );
         }
+
+        addressStructSize = sizeof(srvAddrStruct);
+        getsockname(serverSocket, &srvAddrStruct, &addressStructSize);
+		printf("Server listening on address: %s\n", srvAddrStruct.sa_data );
+		printf("Port number: %s\n", MYPORT );
     }
 
+////////////////////////////////////////////////////////////////////////////////
+
+    // Set up timer
     clock_gettime ( CLOCK_REALTIME, &time_abs );
     time_abs.tv_sec += 1;
     timer_struct.it_value = time_abs;
@@ -228,16 +345,20 @@ int main ( int argc, char *argv[] ) {
     timer_struct.it_interval.tv_nsec = 0;
     timer_settime ( timerID, TIMER_ABSTIME, &timer_struct, NULL );
 
-    masterLogfile = fopen ( masterLogfileName, "a+" );
-
 #ifdef DEBUG
     printf ( "Init complete!\n" );
 #endif
+
+////////////////////////////////////////////////////////////////////////////////
+
     while ( !exitSignal ) {
         if ( configuredProcesses > runningProcesses ) {
             // Start new process from process arguments
             if ( socketpair ( AF_UNIX, SOCK_STREAM, 0, processSocket[runningProcesses] ) == -1 ) {
                 perror ( "socketpair" );
+                clock_gettime ( CLOCK_REALTIME, &currentTime );
+                fprintf ( masterLogfile, "%s, %s, %s\n", ctime ( &currentTime.tv_sec ), "socketpair", strerror ( errno ) );
+                fclose ( masterLogfile );
                 close ( serverSocket );
                 sigaction ( SIGINT, &oldHandler, NULL );						// Restore old signal handler
                 exit ( EXIT_FAILURE );
@@ -265,9 +386,9 @@ int main ( int argc, char *argv[] ) {
                         meas = 24;
                         clock_gettime ( CLOCK_REALTIME, &currentTime );
                         // Log measurement
-                        fprintf ( measLog, "%d, %d, %c\n", currentTime.tv_sec, meas, unit );
+                        fprintf ( measLog, "%s, %d, %c\n", ctime ( &currentTime.tv_sec ), meas, unit );
                         if ( echo ) {
-                            printf ( "%d, %d, %c\n", currentTime.tv_sec, meas, unit );
+                            printf ( "%s, %d, %c\n", ctime ( &currentTime.tv_sec ), meas, unit );
                         }
                         counter = 0;
                     }
@@ -284,7 +405,7 @@ int main ( int argc, char *argv[] ) {
                 }
                 close ( processSocket[runningProcesses][0] );				// Child close 0
                 fclose ( measLog );
-                exit ( 0 );
+                exit ( EXIT_SUCCESS );
             }	// End Child process
             close ( processSocket[runningProcesses][0] );				// Parent close 0
             runningProcesses++;
@@ -300,6 +421,8 @@ int main ( int argc, char *argv[] ) {
                     // No incoming connection. Do nothing
                 } else {
                     perror ( "accept" );
+                    clock_gettime ( CLOCK_REALTIME, &currentTime );
+                    fprintf ( masterLogfile, "%s, %s, %s\n", ctime ( &currentTime.tv_sec ), "accept", strerror ( errno ) );
                 }
             } else {
                 printf ( "Receiving command!\n" );
@@ -310,6 +433,13 @@ int main ( int argc, char *argv[] ) {
 #ifdef DEBUG
                 printf ( "Process count: %d\n", configuredProcesses );
 #endif
+
+				addressStructSize = sizeof(clientAddrStruct);
+				getpeername(server2ClientSocket, &clientAddrStruct, &addressStructSize);
+				printf("Received command from: %s\n", clientAddrStruct.sa_data);
+                clock_gettime ( CLOCK_REALTIME, &currentTime );
+                fprintf ( masterLogfile, "%s, Received command from: %s\n",
+						  ctime ( &currentTime.tv_sec ), get_in_addr(&clientAddrStruct) );
             }
         }
 
@@ -335,15 +465,15 @@ int main ( int argc, char *argv[] ) {
             }
             // Log results to terminal and file
             clock_gettime ( CLOCK_REALTIME, &currentTime );
-            fprintf ( masterLogfile, "%d %s\n", currentTime.tv_sec, statusMsg );
-        }
+            fprintf ( masterLogfile, "%s %s\n", ctime ( &currentTime.tv_sec ), statusMsg );
+        }	// End wait for respond
 
         // Check quit status, ask user if really quit
         if ( quitSignal == true ) {
             printf ( "Really quit? (y)\n" );
-            while ((msg = getchar()) == EOF)
-				;
-			printf("User answered: %c, %d\n", msg, msg);
+            while ( ( msg = getchar() ) == EOF )
+                ;
+            printf ( "User answered: %c, %d\n", msg, msg );
 
             if ( toupper ( msg ) == 'Y' ) {
                 // Send terminate signal to chidren
@@ -357,7 +487,11 @@ int main ( int argc, char *argv[] ) {
                     if ( WIFEXITED ( exitStatus ) ) {
                         // log WEXITSTATUS(exitStatus)
                         clock_gettime ( CLOCK_REALTIME, &currentTime );
-                        fprintf ( masterLogfile, "%d Process terminated with code: %d\n", currentTime.tv_sec, WEXITSTATUS ( exitStatus ) );
+                        fprintf ( masterLogfile, "%s Process terminated normally with code: %d\n", ctime ( &currentTime.tv_sec ), WEXITSTATUS ( exitStatus ) );
+                    }
+                    if ( WIFSIGNALED ( exitSignal ) ) {
+                        clock_gettime ( CLOCK_REALTIME, &currentTime );
+                        fprintf ( masterLogfile, "%s Process terminated abnormally by signal: %d\n", ctime ( &currentTime.tv_sec ), WTERMSIG ( exitStatus ) );
                     }
                 }
 
@@ -367,7 +501,7 @@ int main ( int argc, char *argv[] ) {
                 // User cancelled exit
                 quitSignal = false;
             }
-        }
+        }	// End quit signal check
 
         // Sleep until next timer (1 second)
         sigsuspend ( &timermask );
@@ -376,4 +510,4 @@ int main ( int argc, char *argv[] ) {
     fclose ( masterLogfile );
     sigaction ( SIGINT, &oldHandler, NULL );						// Restore old signal handler
     return 0;
-}
+}	// End of main function
