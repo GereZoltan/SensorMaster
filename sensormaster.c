@@ -76,12 +76,11 @@ static void rt_handler ( int signo ) {
 }
 
 /**
- * @brief get IPv4 or IPv6 address
+ * @brief get IPv4 or IPv6 address in human readable format
  *
- * @param sa socket address structure
+ * @param sa		socket address structure
+ * @param strIPaddr	string containing the result
  * @return void*
- * 192.168.100.100\
- * fe80:fe80:fe80:fe80:fe80:fe80:fe80:fe80\
  */
 void get_ip_addr ( struct sockaddr *sa, char * strIPaddr ) {
 	uint32_t addrv4;
@@ -101,6 +100,13 @@ void get_ip_addr ( struct sockaddr *sa, char * strIPaddr ) {
 
 }
 
+/**
+ * @brief get current time in human readable format
+ *
+ * @param timeStr	string containing the result
+ * @param len		string buffer size
+ * @return void*
+ */
 void getTimeStr( char * timeStr, size_t len) {
 	struct timespec currentTime;
 
@@ -121,26 +127,26 @@ void getTimeStr( char * timeStr, size_t len) {
  * @return int
  */
 int main ( int argc, char *argv[] ) {
-    // Process variables
-    pid_t processes[MAXPROCESSES];
+    //////////////////////////////////////// Process variables
+    pid_t processes[MAXPROCESSES];				// Process list
     int exitStatus;
-    ProcessArguments_t procArgs[MAXPROCESSES];
-    int processSocket[MAXPROCESSES][2];
+    ProcessArguments_t procArgs[MAXPROCESSES];	// Process arguments
+    int processSocket[MAXPROCESSES][2];			// Communication channel between process and master
 
-    // Master process variables
+    //////////////////////////////////////// Master process variables
     char masterLogfileName[MAXFILENAMELENGTH];
     FILE * masterLogfile;
     int configuredProcesses = 0;
     int runningProcesses = 0;
-    int msg;
-    char statusMsg[10];
-    char timestamp[40];
-	char strIPAddr[40];						// Holds the IP address in string format
+    int msg;									// Command to send for processes
+    char statusMsg[10];							// Status report from process
+    char timestamp[40];							// Time stamp
+	char strIPAddr[40];							// Holds the IP address in string format
 
-    // Control variables
+    //////////////////////////////////////// Control variables
     bool exitSignal = false;
 
-    // Signal handling variables
+    //////////////////////////////////////// Signal handling variables
     struct sigaction Xhandler, oldHandler;
     sigset_t XSignalBlock;
     struct sigaction sigAct;
@@ -148,15 +154,15 @@ int main ( int argc, char *argv[] ) {
     struct sigevent tmrEvent;
 
     // Socket handling variables
-    int serverSocket, server2ClientSocket;	// Sockets for server side handling
-    int client2ServerSocket;				// Socket for client side handling
+    int serverSocket, server2ClientSocket;		// Sockets for server side handling
+    int client2ServerSocket;					// Socket for client side handling
     struct sockaddr srvAddrStruct, clientAddrStruct;
     int file_flags;
     struct addrinfo hints, *servinfo, *p;
     int rv;
 	socklen_t addressStructSize;
 
-////////////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////// Program start
 
     printf ( "SensorMaster\nVersion 0.1\n" );
 
@@ -165,7 +171,7 @@ int main ( int argc, char *argv[] ) {
 #endif
 
     if ( ( argc > 1 ) && ( strcmp ( argv[1], "-h" ) == 0 ) ) {			// If help is invoked
-        printf ( "Usage:\n" );										// Print usage and terminate
+        printf ( "Usage:\n" );											// Print usage and terminate
         printf ( "%s -h\n", argv[0] );
         printf ( "%s -c [-l <master_logfile>] [-a <address> | -s] [-mfile <filename>] -sensortype <NTC|SCC30> -sensoraddress <address> [-echo {off|on} -interval <t>]\n", argv[0] );
         printf ( "%s -f <inputfile_containing_command> [-l <master_logfile>] [-a <address> | -s]\n", argv[0] );
@@ -213,13 +219,11 @@ int main ( int argc, char *argv[] ) {
 
 #ifdef DEBUG
     printf ( "Process count: %d\n", configuredProcesses );
-#endif
-
-#ifdef DEBUG
     printf ( "Server address: %s\n", serverAddress );
 #endif
 
-////////////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////// Program in client mode
+	//////////////////////////////////////// Sends commands to server and terminates
 
     // Check if client mode...
     // ...and open socket to address, send data and terminate.
@@ -284,7 +288,8 @@ int main ( int argc, char *argv[] ) {
         exit ( EXIT_SUCCESS );
     }
 
-////////////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////// Program in server mode
+	//////////////////////////////////////// Set up server, and start listening
 
     // Check if server mode...
     // ...and start socket server, bind address and start listening
@@ -363,7 +368,7 @@ int main ( int argc, char *argv[] ) {
 		printf("Port number: %s\n", MYPORT );
     }
 
-////////////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////// Set up timer
 
     // Set up timer
     clock_gettime ( CLOCK_REALTIME, &time_abs );
@@ -377,9 +382,12 @@ int main ( int argc, char *argv[] ) {
     printf ( "Init complete!\n" );
 #endif
 
-////////////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////// Start main program loop
 
     while ( !exitSignal ) {
+
+		//////////////////////////////////////// Start new processes
+
         if ( configuredProcesses > runningProcesses ) {
             // Start new process from process arguments
             if ( socketpair ( AF_UNIX, SOCK_STREAM, 0, processSocket[runningProcesses] ) == -1 ) {
@@ -391,6 +399,9 @@ int main ( int argc, char *argv[] ) {
                 sigaction ( SIGINT, &oldHandler, NULL );						// Restore old signal handler
                 exit ( EXIT_FAILURE );
             }
+
+            //////////////////////////////////////// Child process starts
+
             processes[runningProcesses] = fork();
             if ( processes[runningProcesses] == 0 ) {				// Child process
                 bool echo = procArgs[runningProcesses].echo;
@@ -408,7 +419,7 @@ int main ( int argc, char *argv[] ) {
 
                 measLog = fopen ( procArgs[runningProcesses].filename, "a+" );
 
-                close ( processSocket[runningProcesses][1] );				// Child close 1
+                close ( processSocket[runningProcesses][1] );				// Child close socket side 1
 
 				if (strcmp(procArgs[runningProcesses].sensorType, "NTC") == 0) {
 					// Init NTC sensor
@@ -468,13 +479,16 @@ int main ( int argc, char *argv[] ) {
                 }
 
                 close(sensorFD);
-                close ( processSocket[runningProcesses][0] );				// Child close 0
+                close ( processSocket[runningProcesses][0] );				// Child close socket side 0
                 fclose ( measLog );
                 exit ( EXIT_SUCCESS );
             }	// End Child process
-            close ( processSocket[runningProcesses][0] );				// Parent close 0
+
+            close ( processSocket[runningProcesses][0] );				// Parent close socket side 0
             runningProcesses++;
         }	// End start process
+
+        //////////////////////////////////////// Server accepting commands
 
         // Check socket
         // and process command
@@ -508,6 +522,8 @@ int main ( int argc, char *argv[] ) {
             }
         }
 
+        //////////////////////////////////////// Query children's status
+
         // Send status request to chidren
         msg = 1;
         for ( int i = 0; i < runningProcesses; i++ ) {
@@ -533,6 +549,8 @@ int main ( int argc, char *argv[] ) {
             fprintf ( masterLogfile, "%s %s\n", timestamp, statusMsg );
 			printf ( "%s %s\n", timestamp, statusMsg );
         }	// End wait for respond
+
+        //////////////////////////////////////// Check quit status
 
         // Check quit status, ask user if really quit
         if ( quitSignal == true ) {
@@ -572,6 +590,8 @@ int main ( int argc, char *argv[] ) {
         // Sleep until next timer (1 second)
         sigsuspend ( &timermask );
     }	// End while loop
+
+    //////////////////////////////////////// Final clean-up
 
     fclose ( masterLogfile );
     sigaction ( SIGINT, &oldHandler, NULL );						// Restore old signal handler
