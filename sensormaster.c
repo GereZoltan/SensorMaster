@@ -15,6 +15,7 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <sys/ioctl.h>
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -79,13 +80,37 @@ static void rt_handler ( int signo ) {
  *
  * @param sa socket address structure
  * @return void*
+ * 192.168.100.100\
+ * fe80:fe80:fe80:fe80:fe80:fe80:fe80:fe80\
  */
-void *get_in_addr ( struct sockaddr *sa ) {
+void get_ip_addr ( struct sockaddr *sa, char * strIPaddr ) {
+	uint32_t addrv4;
+	char * ptr = strIPaddr;
     if ( sa->sa_family == AF_INET ) {
-        return & ( ( ( struct sockaddr_in* ) sa )->sin_addr );
-    }
+		addrv4 = ( ( struct sockaddr_in* ) sa )->sin_addr.s_addr;
+		snprintf(strIPaddr, 40, "%d.%d.%d.%d", addrv4 & 255, (addrv4 >> 8) & 255 , (addrv4 >> 16) & 255 , addrv4 >> 24 );
+    } else {
+	for (int i = 0; i < 8; i++) {
+		sprintf(ptr, "%x",  ( ( struct sockaddr_in6* ) sa )->sin6_addr.__in6_u.__u6_addr16[i] );
+		ptr +=4;
+		*ptr = ':';
+		ptr++;
+	}
+	*ptr = '\0';
+	}
 
-    return & ( ( ( struct sockaddr_in6* ) sa )->sin6_addr );
+}
+
+void getTimeStr( char * timeStr, size_t len) {
+	struct timespec currentTime;
+
+	clock_gettime ( CLOCK_REALTIME, &currentTime );
+	snprintf(timeStr, len, "%s", ctime ( &currentTime.tv_sec ) );
+	for (int i = 0; i < strlen(timeStr); i++) {
+		if ((timeStr[i] == '\r') || (timeStr[i] == '\n')) {
+			timeStr[i] = '\0';
+		}
+	}
 }
 
 /**
@@ -109,7 +134,8 @@ int main ( int argc, char *argv[] ) {
     int runningProcesses = 0;
     int msg;
     char statusMsg[10];
-    struct timespec currentTime;
+    char timestamp[40];
+	char strIPAddr[40];						// Holds the IP address in string format
 
     // Control variables
     bool exitSignal = false;
@@ -164,8 +190,8 @@ int main ( int argc, char *argv[] ) {
     Xhandler.sa_flags = 0;
     if ( sigaction ( SIGINT, &Xhandler, &oldHandler ) < 0 ) {
         perror ( "Signal" );
-        clock_gettime ( CLOCK_REALTIME, &currentTime );
-        fprintf ( masterLogfile, "%s, %s, %s\n", ctime ( &currentTime.tv_sec ), "Signal", strerror ( errno ) );
+		getTimeStr(timestamp, sizeof(timestamp));
+        fprintf ( masterLogfile, "%s, %s, %s\n", timestamp, "Signal", strerror ( errno ) );
         fclose ( masterLogfile );
         exit ( EXIT_FAILURE );
     }
@@ -206,8 +232,8 @@ int main ( int argc, char *argv[] ) {
 
 		if ((rv = getaddrinfo(serverAddress, MYPORT, &hints, &servinfo)) != 0) {
 			printf("getaddrinfo: %s\n", gai_strerror(rv));
-			clock_gettime ( CLOCK_REALTIME, &currentTime );
-            fprintf ( masterLogfile, "%s, %s, %s\n", ctime ( &currentTime.tv_sec ), "clientsocket", gai_strerror(rv) );
+			getTimeStr(timestamp, sizeof(timestamp));
+            fprintf ( masterLogfile, "%s, %s, %s\n", timestamp, "clientsocket", gai_strerror(rv) );
             fclose ( masterLogfile );
             sigaction ( SIGINT, &oldHandler, NULL );						// Restore old signal handler
             exit ( EXIT_FAILURE );
@@ -217,8 +243,10 @@ int main ( int argc, char *argv[] ) {
 #ifdef DEBUG
         printf("getaddrinfo returned:\n");
 		for ( p = servinfo; p != NULL; p = p->ai_next ) {
+			get_ip_addr(p->ai_addr, strIPAddr);
 			printf("flags: %d\tfamily:%d\tsocktype:%d\tprotocol:%d\taddr:%s\tcanonname:%s\n",
-				   p->ai_flags, p->ai_family, p->ai_socktype, p->ai_protocol, p->ai_addr->sa_data , p->ai_canonname);
+//					p->ai_flags, p->ai_family, p->ai_socktype, p->ai_protocol, p->ai_addr->sa_data , p->ai_canonname);
+					p->ai_flags, p->ai_family, p->ai_socktype, p->ai_protocol, strIPAddr , p->ai_canonname);
 		}
 		printf("End of listing\n");
 #endif
@@ -236,8 +264,8 @@ int main ( int argc, char *argv[] ) {
 
 		if (p == NULL) {
 			printf("Connection failed\n");
-            clock_gettime ( CLOCK_REALTIME, &currentTime );
-            fprintf ( masterLogfile, "%s, %s, %s\n", ctime ( &currentTime.tv_sec ), "Connection failed" );
+            getTimeStr(timestamp, sizeof(timestamp));
+            fprintf ( masterLogfile, "%s, %s\n", timestamp, "Connection failed" );
             fclose ( masterLogfile );
             sigaction ( SIGINT, &oldHandler, NULL );						// Restore old signal handler
             exit ( EXIT_FAILURE );
@@ -247,8 +275,8 @@ int main ( int argc, char *argv[] ) {
             write ( client2ServerSocket, &procArgs[i], sizeof ( procArgs[i] ) );
         }
 
-        clock_gettime ( CLOCK_REALTIME, &currentTime );
-        fprintf ( masterLogfile, "%s, %s\n", ctime ( &currentTime.tv_sec ), "Command send successful" );
+        getTimeStr(timestamp, sizeof(timestamp));
+        fprintf ( masterLogfile, "%s, %s\n", timestamp, "Command send successful" );
         fclose ( masterLogfile );
         close ( client2ServerSocket );
 		freeaddrinfo(servinfo);
@@ -271,9 +299,8 @@ int main ( int argc, char *argv[] ) {
 
         if ( ( rv = getaddrinfo ( NULL, MYPORT, &hints, &servinfo ) ) != 0 ) {
             printf ( "getaddrinfo: %s\n", gai_strerror ( rv ) );
-            clock_gettime ( CLOCK_REALTIME, &currentTime );
-            fprintf ( masterLogfile, "%s, %s, %s\n", ctime ( &currentTime.tv_sec ),
-                      "getaddrinfo", gai_strerror ( rv ) );
+            getTimeStr(timestamp, sizeof(timestamp));
+            fprintf ( masterLogfile, "%s, %s, %s\n", timestamp, "getaddrinfo", gai_strerror ( rv ) );
             fclose ( masterLogfile );
             sigaction ( SIGINT, &oldHandler, NULL );				// Restore old signal handler
             exit ( EXIT_FAILURE );
@@ -305,8 +332,8 @@ int main ( int argc, char *argv[] ) {
 
         if ( p == NULL ) {
             printf ( "listener: failed to bind socket\n" );
-            clock_gettime ( CLOCK_REALTIME, &currentTime );
-            fprintf ( masterLogfile, "%s, %s\n", ctime ( &currentTime.tv_sec ), "listener: failed to bind socket\n" );
+            getTimeStr(timestamp, sizeof(timestamp));
+            fprintf ( masterLogfile, "%s, %s\n", timestamp, "listener: failed to bind socket\n" );
             fclose ( masterLogfile );
             sigaction ( SIGINT, &oldHandler, NULL );						// Restore old signal handler
             exit ( EXIT_FAILURE );
@@ -321,8 +348,8 @@ int main ( int argc, char *argv[] ) {
         // Listen
         if ( listen ( serverSocket, 10 ) == -1 ) {
             perror ( "serverlisten" );
-            clock_gettime ( CLOCK_REALTIME, &currentTime );
-            fprintf ( masterLogfile, "%s, %s, %s\n", ctime ( &currentTime.tv_sec ), "serverlisten", strerror ( errno ) );
+            getTimeStr(timestamp, sizeof(timestamp));
+            fprintf ( masterLogfile, "%s, %s, %s\n", timestamp, "serverlisten", strerror ( errno ) );
             fclose ( masterLogfile );
             close ( serverSocket );
             sigaction ( SIGINT, &oldHandler, NULL );						// Restore old signal handler
@@ -331,7 +358,8 @@ int main ( int argc, char *argv[] ) {
 
         addressStructSize = sizeof(srvAddrStruct);
         getsockname(serverSocket, &srvAddrStruct, &addressStructSize);
-		printf("Server listening on address: %s\n", srvAddrStruct.sa_data );
+		get_ip_addr(&srvAddrStruct, strIPAddr);
+		printf("Server listening on address: %s\n", strIPAddr );
 		printf("Port number: %s\n", MYPORT );
     }
 
@@ -356,8 +384,8 @@ int main ( int argc, char *argv[] ) {
             // Start new process from process arguments
             if ( socketpair ( AF_UNIX, SOCK_STREAM, 0, processSocket[runningProcesses] ) == -1 ) {
                 perror ( "socketpair" );
-                clock_gettime ( CLOCK_REALTIME, &currentTime );
-                fprintf ( masterLogfile, "%s, %s, %s\n", ctime ( &currentTime.tv_sec ), "socketpair", strerror ( errno ) );
+                getTimeStr(timestamp, sizeof(timestamp));
+                fprintf ( masterLogfile, "%s, %s, %s\n", timestamp, "socketpair", strerror ( errno ) );
                 fclose ( masterLogfile );
                 close ( serverSocket );
                 sigaction ( SIGINT, &oldHandler, NULL );						// Restore old signal handler
@@ -369,8 +397,11 @@ int main ( int argc, char *argv[] ) {
                 int measInterval = procArgs[runningProcesses].interval;
                 int counter = 0;
                 FILE *measLog;
-                int meas;
-                char unit = 'C';
+                int16_t meas = 0;
+                char unit = '\0';
+                char senstype = '\0';
+                int sensorFD;
+				char reg;
 
                 bool childTerminate = false;
                 int childStatus = PS_START;
@@ -379,16 +410,48 @@ int main ( int argc, char *argv[] ) {
 
                 close ( processSocket[runningProcesses][1] );				// Child close 1
 
+				if (strcmp(procArgs[runningProcesses].sensorType, "NTC") == 0) {
+					// Init NTC sensor
+					sensorFD = open("/dev/i2c-2", O_RDWR);
+					if (sensorFD == -1) {
+						perror("i2c_open");
+						getTimeStr(timestamp, sizeof(timestamp));
+						fprintf ( measLog, "%s, %s, %s\n", timestamp, "i2c_open", strerror ( errno ) );
+					}
+					if (ioctl(sensorFD, I2C_SLAVE, procArgs[runningProcesses].sensorAddress) == -1) {
+						perror("i2c_ioctl");
+						getTimeStr(timestamp, sizeof(timestamp));
+						fprintf ( measLog, "%s, %s, %s\n", timestamp, "i2c_ioctl", strerror ( errno ) );
+					}
+				}
+
                 childStatus = PS_MEASURING;
                 while ( !childTerminate ) {
                     if ( measInterval == counter ) {
                         // Take measurement
-                        meas = 24;
-                        clock_gettime ( CLOCK_REALTIME, &currentTime );
+						// Read value
+						reg = 1;
+						write(sensorFD, &reg, 1);
+						if (read(sensorFD, &meas, 2) == 0) {
+							childStatus = PS_ERROR;
+						} else {
+							childStatus = PS_MEASURING;
+						}
+						meas = (meas >> 8) | (meas << 8);			// Swap byte order
+						// Read type
+						reg = 2;
+						write(sensorFD, &reg, 1);
+						read(sensorFD, &senstype, 1);
+						// Read unit
+						reg = 3;
+						write(sensorFD, &reg, 1);
+						read(sensorFD, &unit, 1);
+                        getTimeStr(timestamp, sizeof(timestamp));
                         // Log measurement
-                        fprintf ( measLog, "%s, %d, %c\n", ctime ( &currentTime.tv_sec ), meas, unit );
+                        fprintf ( measLog, "%s, %d, %c\n", timestamp, meas, unit );
                         if ( echo ) {
-                            printf ( "%s, %d, %c\n", ctime ( &currentTime.tv_sec ), meas, unit );
+//                             printf ( "%s, Type: %c Value: %d, %x Unit: %c, %x\n", ctime ( &currentTime.tv_sec ), senstype, meas, meas, unit, unit );
+							printf ( "%s, Value: %d\tUnit: %c\n", timestamp, meas, unit );
                         }
                         counter = 0;
                     }
@@ -403,6 +466,8 @@ int main ( int argc, char *argv[] ) {
                     }
                     counter++;
                 }
+
+                close(sensorFD);
                 close ( processSocket[runningProcesses][0] );				// Child close 0
                 fclose ( measLog );
                 exit ( EXIT_SUCCESS );
@@ -421,8 +486,8 @@ int main ( int argc, char *argv[] ) {
                     // No incoming connection. Do nothing
                 } else {
                     perror ( "accept" );
-                    clock_gettime ( CLOCK_REALTIME, &currentTime );
-                    fprintf ( masterLogfile, "%s, %s, %s\n", ctime ( &currentTime.tv_sec ), "accept", strerror ( errno ) );
+                    getTimeStr(timestamp, sizeof(timestamp));
+                    fprintf ( masterLogfile, "%s, %s, %s\n", timestamp, "accept", strerror ( errno ) );
                 }
             } else {
                 printf ( "Receiving command!\n" );
@@ -436,10 +501,10 @@ int main ( int argc, char *argv[] ) {
 
 				addressStructSize = sizeof(clientAddrStruct);
 				getpeername(server2ClientSocket, &clientAddrStruct, &addressStructSize);
-				printf("Received command from: %s\n", clientAddrStruct.sa_data);
-                clock_gettime ( CLOCK_REALTIME, &currentTime );
-                fprintf ( masterLogfile, "%s, Received command from: %s\n",
-						  ctime ( &currentTime.tv_sec ), get_in_addr(&clientAddrStruct) );
+				get_ip_addr(&clientAddrStruct, strIPAddr);
+				printf("Received command from: %s\n", strIPAddr);
+                getTimeStr(timestamp, sizeof(timestamp));
+                fprintf ( masterLogfile, "%s, Received command from: %s\n", timestamp, strIPAddr );
             }
         }
 
@@ -464,8 +529,9 @@ int main ( int argc, char *argv[] ) {
                 strcpy ( statusMsg, "Unknown\0" );
             }
             // Log results to terminal and file
-            clock_gettime ( CLOCK_REALTIME, &currentTime );
-            fprintf ( masterLogfile, "%s %s\n", ctime ( &currentTime.tv_sec ), statusMsg );
+            getTimeStr(timestamp, sizeof(timestamp));
+            fprintf ( masterLogfile, "%s %s\n", timestamp, statusMsg );
+			printf ( "%s %s\n", timestamp, statusMsg );
         }	// End wait for respond
 
         // Check quit status, ask user if really quit
@@ -473,7 +539,7 @@ int main ( int argc, char *argv[] ) {
             printf ( "Really quit? (y)\n" );
             while ( ( msg = getchar() ) == EOF )
                 ;
-            printf ( "User answered: %c, %d\n", msg, msg );
+//             printf ( "User answered: %c, %d\n", msg, msg );
 
             if ( toupper ( msg ) == 'Y' ) {
                 // Send terminate signal to chidren
@@ -486,12 +552,12 @@ int main ( int argc, char *argv[] ) {
                     wait ( &exitStatus );
                     if ( WIFEXITED ( exitStatus ) ) {
                         // log WEXITSTATUS(exitStatus)
-                        clock_gettime ( CLOCK_REALTIME, &currentTime );
-                        fprintf ( masterLogfile, "%s Process terminated normally with code: %d\n", ctime ( &currentTime.tv_sec ), WEXITSTATUS ( exitStatus ) );
+                        getTimeStr(timestamp, sizeof(timestamp));
+                        fprintf ( masterLogfile, "%s Process terminated normally with code: %d\n", timestamp, WEXITSTATUS ( exitStatus ) );
                     }
                     if ( WIFSIGNALED ( exitSignal ) ) {
-                        clock_gettime ( CLOCK_REALTIME, &currentTime );
-                        fprintf ( masterLogfile, "%s Process terminated abnormally by signal: %d\n", ctime ( &currentTime.tv_sec ), WTERMSIG ( exitStatus ) );
+                        getTimeStr(timestamp, sizeof(timestamp));
+                        fprintf ( masterLogfile, "%s Process terminated abnormally by signal: %d\n", timestamp, WTERMSIG ( exitStatus ) );
                     }
                 }
 

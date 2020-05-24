@@ -1,6 +1,6 @@
 # Test configurations
--mfile meas1.txt -sensortype NTC -sensoraddress 0x20 -echo on -interval 5
--mfile meas2.txt -sensortype NTC -sensoraddress 0x21 -echo off -interval 5
--mfile meas3.txt -sensortype SCC -sensoraddress 0x22 -echo on -interval 5
--mfile meas4.txt -sensortype SCC -sensoraddress 0x23 -echo off -interval 5
-
+#-mfile meas1.txt -sensortype NTC -sensoraddress 0x20 -echo on -interval 5
+#-mfile meas2.txt -sensortype NTC -sensoraddress 0x21 -echo off -interval 5
+#-mfile meas3.txt -sensortype SCC -sensoraddress 0x22 -echo on -interval 5
+#-mfile meas4.txt -sensortype SCC -sensoraddress 0x23 -echo off -interval 5
+-mfile meas.txt -sensortype NTC -sensoraddress 0x20 -echo on -interval 5
