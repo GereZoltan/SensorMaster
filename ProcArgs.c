@@ -16,9 +16,9 @@
 
 #include "ProcArgs.h"
 
-#ifndef DEBUG
-#define DEBUG 0
-#endif
+//#ifndef DEBUG
+//#define DEBUG 1
+//#endif
 
 #define MAXLINELENGTH 128
 

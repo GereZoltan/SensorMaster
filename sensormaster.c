@@ -36,9 +36,9 @@
 
 #include "ProcArgs.h"
 
-#ifndef DEBUG
-#define DEBUG 1
-#endif
+//#ifndef DEBUG
+//#define DEBUG 1
+//#endif
 
 #define MAXPROCESSES (16)
 #define PS_ERROR (-1)
@@ -443,7 +443,7 @@ int main ( int argc, char *argv[] ) {
 						// Read value
 						reg = 1;
 						write(sensorFD, &reg, 1);
-						if (read(sensorFD, &meas, 2) == 0) {
+						if (read(sensorFD, &meas, 2) <= 0) {
 							childStatus = PS_ERROR;
 						} else {
 							childStatus = PS_MEASURING;
