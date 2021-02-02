@@ -10,6 +10,16 @@
  * <MIT License>
  */
 
+/*
+ * TODO:
+ * You could use inet_ntop() to convert ip-address to a string. Your conversion works only with processors little endian byte order. The library functions work on all linuxes regardless of the byte order.
+ *
+ * You have also some of your own byte swapping routines that depend on the endianness of the processor. With CMAKE you can use TestBigEndian to determine the endianness of your system and have your code to swap bytes when needed.
+ *
+ * The main function has comments to divide it into sections but I still feel that using functions would have improved the readability of the code. Function calls instead of blocks of code help in seeing the overall structure of the program. The current version requires scrolling back and forth to get idea of the program flow in general and in different operating modes.
+ *
+ */
+
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/types.h>

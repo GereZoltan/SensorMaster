@@ -22,21 +22,23 @@ typedef struct {
 } ProcessArguments_t;
 
 /**
- * @brief	Process the programs commnad line argument list.
- * 			Returns the number of configurations successfully read.
+ * @brief   Process the input parameters
+ *          Read command line arguments
+ *          If specified, read from file
+ *          Returns the number of configurations successfully read.
  *
- * @param	argc argument count
- * @param	argv argument string array
- * @param	mlfn Master log file name
- * @param	procArgs Process argument array
+ * @param   argc argument count
+ * @param   argv argument string array
+ * @param   mlfn Master log file name
+ * @param   procArgs Process argument array
  *
- * @return	int
+ * @return   int
  *
  * Command line arguments:
- *		-h
- *		-c -l <master_logfile> -a <address_client_mode> -s <address_server_mode> -mfile <filename> -sensortype <NTC|SCC30> -sensoraddress <address> -echo {off|on} -interval <t>
- *		-f <inputfile_containing_command> -l <master_logfile> -a <address> -s <address>
+ *      -h
+ *      -c -l <master_logfile> -a <address_client_mode> -s -mfile <filename> -sensortype <NTC|SCC30> -sensoraddress <address> -echo {off|on} -interval <t>
+ *      -f <inputfile_containing_command> -l <master_logfile> -a <address> -s <address>
  */
-int ReadArgumentsFromCommandLine (int argc, char *argv[], char * mlfn, ProcessArguments_t *procArgs, int argBufSize );
+int ReadArgumentsFromCommandLine (int argc, char *argv[], char * mlfn, ProcessArguments_t * procArgs, int argBufSize );
 
 #endif

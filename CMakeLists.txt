@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.0)
 
 project(sensormaster LANGUAGES C)
 
+include(TestBigEndian)
+
 add_executable(sensormaster sensormaster.c ProcArgs.c)
 target_link_libraries(sensormaster rt)
 
